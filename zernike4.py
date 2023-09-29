@@ -127,9 +127,16 @@ class ZernikePolynomial:
 		
 		# Stack the convolved color channels back into an RGB image
 		convolved_image = np.stack((r_convolved, g_convolved, b_convolved), axis=-1)
+
+		min_value = np.min(convolved_image)
+		max_value = np.max(convolved_image)
 		
-		# Normalize the values to the range [0, 255]
-		convolved_image = (convolved_image - np.min(convolved_image)) / (np.max(convolved_image) - np.min(convolved_image)) * 255
+		if min_value == max_value:
+			# Handle the case where all values are the same (avoid divide by zero)
+			convolved_image = np.zeros_like(convolved_image)
+		else:
+			# Normalize the values to the range [0, 255]
+			convolved_image = (convolved_image - min_value) / (max_value - min_value) * 255
 		
 		# Ensure the data type is uint8 (for displaying as an image)
 		convolved_image = convolved_image.astype(np.uint8)

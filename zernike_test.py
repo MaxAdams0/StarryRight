@@ -23,7 +23,7 @@ phasemap = zernike.generate_phasemap(grid_size=33)
 zernike.plot_phasemap(phasemap)
 
 # PSF Parameters
-wavelength = 0.5  # Wavelength of light (e.g., 0.5 micrometers)
+wavelength = random.randint(2,3)  # Wavelength of light (micrometers) (visible light is 0.38-0.7)
 aperture_radius = 100  # Radius of the aperture (normalized to 1)
 psf_size = grid_size
 pixel_size = 0.01  # Size of each pixel in the detector
