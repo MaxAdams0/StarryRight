@@ -10,53 +10,44 @@ import argparse
 from zernike4 import ZernikePolynomial
 from tile import ImageTile
 
+# Terminal colors
 GREEN = '\u001b[38;5;10m'
 YELLOW = '\u001b[38;5;11m'
 RED = '\u001b[38;5;9m'
 BLUE = '\u001b[38;5;12m'
 ENDC = '\u001b[0m'
 
-ROOT_DATA_DIR = None
-DEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "dataset")
-TILE_DATA_DIR = os.path.join(os.path.dirname(__file__), "tiledimages")
-
-
 # Fixed Hyperparameters
 MIN_IMAGE_SIZE = 1048
 OUTPUT_IMAGE_SIZE = 512
 ACCEPTED_FORMATS = ['.jpg', '.jpeg', '.tif', '.tiff']
-# Command-line adjustable Hyperparameters
-BATCH_SIZE = None # Amount of images per process
-FILE_LIMIT = None # -1 = disabled
-OUTPUT_PER_IMAGE = None
-PROCESSES = None
-DEBUG = None
 
-def process_image(input_path, output_dir, distortions):
+def process_image(params, input_path, output_dir, distortions):
 	# To seed randoms to it is different every run
 	random.seed = time.process_time()
 
-	try:
-		if os.path.splitext(input_path)[1] in ACCEPTED_FORMATS:
+	if os.path.splitext(input_path)[1] in ACCEPTED_FORMATS:
+		try:
 			# First tile the image into 512x512 images
 			# Create tiler object
 			tiler = ImageTile(input_path, MIN_IMAGE_SIZE, OUTPUT_IMAGE_SIZE)
 			# Split image into tiled images
-			images = tiler.tile_image(debug=DEBUG)
-			if len(images) == 0: # only caused by min_image_size not reached
+			images = tiler.tile_image()
+			if images is None: # only caused by min_image_size not reached
 				#print(f"{YELLOW}Image {input_path} is too small (<{MIN_IMAGE_SIZE}x{MIN_IMAGE_SIZE}){ENDC}")
 				return 'MINSIZE'
-			images = tiler.choose_images(images, OUTPUT_PER_IMAGE)
-		else:
-			# Not an allowed format from the specified list of files
-			print(f"{RED}Error loading image '{input_path}': Incorrect format (not {ACCEPTED_FORMATS}){ENDC}")
-			return 'FORMAT'
-	except Exception as e:
-		print(f"{RED}Error loading image '{input_path}': {e}{ENDC}")
-		return 'ERROR'
+			chosen_images = tiler.choose_images(images, params.tiles)
+		except Exception as e:
+			print(f"{RED}Error loading image: {input_path}")
+			print(f"{e}{ENDC}")
+			return 'ERROR'
+	else:
+		# Not an allowed format from the specified list of files
+		print(f"{RED}Error loading image '{input_path}': Incorrect format (not {ACCEPTED_FORMATS}){ENDC}")
+		return 'FORMAT'
 	
 	# image_touple is a group of images and their names from the ImageTile.choose_images() function
-	for image_touple in images:
+	for image_touple in chosen_images:
 		filename, image = image_touple
 
 		output_path = os.path.join(output_dir, filename)
@@ -71,7 +62,8 @@ def process_image(input_path, output_dir, distortions):
 				# Phasemap parameters
 				n = 3
 				m = 1
-				grid_size = 33
+				grid_size = 32
+				upscale_factor = 5 # multiplier to grid_size
 
 				# Initialize a Zernike Polynomial of order n,m
 				zernike = ZernikePolynomial(n, m)
@@ -90,7 +82,6 @@ def process_image(input_path, output_dir, distortions):
 				# Apply rotation to the PSF for randomization purposes
 				theta = random.randint(0,360)
 				rotated_psf = zernike.rotate_psf(psf, theta)
-				#zernike.plot_psf(rotated_psf)
 
 				image = zernike.apply_psf_to_image(image, rotated_psf)
 			except Exception as e:
@@ -146,139 +137,138 @@ def get_state_color(state):
 
 	return state_dict[state]
 
-# For Multiprocessing - passing args
-def process_batch_wrapper(args):
-	batch_files, process_id = args
-	start_time = time.perf_counter()
+def process_batch(args):
+	# Extract variables from arguments
+	params, batch_files, process_id = args
 
-	image_time_avg, state = process_batch(batch_files)
-	
-	color = get_state_color(state)
-
-	end_time = time.perf_counter()
-	elapsed_time = round(end_time - start_time, 2)
-
-	print(f"{color}Process: {BLUE}{process_id:3}",
-	   		f"{color}Num Files: {BLUE}{len(batch_files):2}",
-			f"{color}Total: {BLUE}{elapsed_time:6.2f}s",
-			f"{color}Per Image: {BLUE}{image_time_avg:5.2f}s{ENDC}")
-
-# Traverse the input dataset directory and distort images
-def process_batch(files):
 	image_time_total = 0
-	for file_ in files:
+	for file_path in batch_files:
 		start_time = time.perf_counter()
 
-		input_image_path = os.path.join(ROOT_DATA_DIR, file_)
-		
+		input_image_path = os.path.join(params.input, file_path)
+		# List of every distortion applied to the image
+		# This should be inputted later, its stupid to force someone to edit this
 		distortions = ['zernike_blur']
-
-		state = process_image(input_image_path, DEST_DATA_DIR, distortions)
+		# The state is the return statements, which is just a letter code
+		state = process_image(params, input_image_path, params.output, distortions)
 
 		end_time = time.perf_counter()
 		image_time_total += (end_time - start_time)
+	image_time_avg = round(image_time_total / len(batch_files), 2)
 	
-	image_time_avg = round(image_time_total / len(files), 2)
-	
-	return image_time_avg, state
+	# This is stupid but whatever
+	color = get_state_color(state)
 
-def get_batches():
+	print(f"{color}Process: {BLUE}{process_id:3}",
+	   		f"{color}Num Files: {BLUE}{len(batch_files):2}",
+			f"{color}Per Image: {BLUE}{image_time_avg:5.2f}s{ENDC}"
+	)
+
+def get_batches(params):
 	# Get all paths for an image's current path and its new path
 	image_list = []
-	if not os.path.exists(DEST_DATA_DIR):
-		os.makedirs(DEST_DATA_DIR)
-		print(f"Created Folder: {DEST_DATA_DIR}")
-	for root, dirs, files in os.walk(ROOT_DATA_DIR):
+	if not os.path.exists(params.output):
+		os.makedirs(params.output)
+	for root, dirs, files in os.walk(params.input):
 		# Copy each file to the destination directory
 		for f in files:
 			# Get the relative path from the root directory
-			relative_path = os.path.relpath(os.path.join(root, f), ROOT_DATA_DIR)
+			relative_path = os.path.relpath(os.path.join(root, f), params.input)
 			image_list.append(relative_path)
 
 	# Split files into batches
-	num_of_files = FILE_LIMIT if FILE_LIMIT != -1 else len(image_list)
-	file_batches = [image_list[i:i+BATCH_SIZE] for i in range(0, num_of_files, BATCH_SIZE)]
+	num_of_files = params.file_limit if params.file_limit != -1 else len(image_list)
+	file_batches = [image_list[i:i+params.batch_size] for i in range(0, num_of_files, params.batch_size)]
 
 	print(f"{GREEN}Total number of files: {BLUE}{num_of_files}{ENDC}")
 	print(f"{GREEN}Total number of batches: {BLUE}{len(file_batches)}{ENDC}")
 
 	return file_batches
 
-def main_wrapper():
+def main_wrapper(params):
 	
-	file_batches = get_batches()
+	file_batches = get_batches(params)
 
 	# Pool only takes one argument, so you have to form it into a tuple
-	args_list = [(batch_files, i) for i, batch_files in enumerate(file_batches)]
+	args_list = [(params, batch_files, i) for i, batch_files in enumerate(file_batches)]
 	
-	if not DEBUG:
+	if not params.debug:
 		try:
-			with mp.Pool(processes=PROCESSES) as pool:
-				pool.imap_unordered(process_batch_wrapper, args_list)
+			with mp.Pool(processes=params.processes) as pool:
+				pool.imap_unordered(process_batch, args_list)
 				pool.close()
 				pool.join()
 		except Exception as e:
-			print(f"{RED}Error running Processes in Pool: {e}{ENDC}")
+			print(f"{RED}Error running Processes in Pool:")
+			print(f"{e}{ENDC}")
 	
 	else:
 		args = args_list[0]
-		process_batch_wrapper(args)
-
+		process_batch(args)
 
 def set_constants():
-	global DEBUG, FILE_LIMIT, BATCH_SIZE, ROOT_DATA_DIR, PROCESSES
-
 	# Instantiate the command-line argument parser and create potential arguments
 	parser = argparse.ArgumentParser(
 		description='Dataset preparation tool for VikX. Not meant for external use, but such use is permitted.'
 	)
-	parser.add_argument('-d', '--debug', 
-					action='store_true', 
-					help='Enable debug mode - may hurt performance'
+	parser.add_argument('-i', '--input', 
+					type=str, 
+					default="C:\dev\Datasets\AstrographyImages", 
+					help='The input directory'
+	)
+	parser.add_argument('-o', '--output', 
+					type=str, 
+					default=os.path.join(os.path.dirname(__file__), "dataset"), 
+					help='The output directory'
 	)
 	parser.add_argument('-l', '--file_limit', 
 					type=int, 
 					default=-1, 
 					help='The cap for how many files are processed'
 	)
-	parser.add_argument('-b', '--batch_size',
+	parser.add_argument('-t', '--tiles', 
 					type=int, 
-					default=7, 
-					help='The amount of files per batch'
-	)
-	parser.add_argument('-i', '--input', 
-					type=str, 
-					default=r"C:\dev\Datasets\AstrographyImages", 
-					help='The input directory'
-	)
-	parser.add_argument('-o', '--opi', 
-					type=str, 
 					default=3, 
 					help='The number of images processed per input image'
 	)
+	parser.add_argument('-b', '--batch_size',
+					type=int, 
+					default=5, 
+					help='The amount of files per batch'
+	)
 	parser.add_argument('-p', '--processes', 
-					type=str, 
-					default=12, 
+					type=int, 
+					default=10, 
 					help='The number of distortion threads - DO NOT set more than thread count of your cpu. May lead to deadlocks & context-switching overhead strain'
+	)
+	parser.add_argument('-d', '--debug', 
+					action='store_true', 
+					help='Enable debug mode - may hurt performance'
 	)
 	args = parser.parse_args()
 
 	# Note: very odd implementation by the argparse devs, but if there is not a "--[argname]" argument
 	# 	listed above, the args.[argname] will throw an error.
-	DEBUG = args.debug
-	FILE_LIMIT = args.file_limit
-	BATCH_SIZE = args.batch_size
-	ROOT_DATA_DIR = args.input
-	PROCESSES = args.processes
-
+	return args
 
 if __name__ == "__main__":
 	os.system('color')
 	# Set command line arguments as constants (hyperparameters)
-	set_constants()
+	params = set_constants()
+
+	print(
+		f"{GREEN}Running with args:",
+		f"{GREEN}i='{BLUE}{params.input}'",
+		f"{GREEN}o='{BLUE}{params.output}'",
+		f"{GREEN}f={BLUE}{params.file_limit}",
+		f"{GREEN}t={BLUE}{params.tiles}",
+		f"{GREEN}b={BLUE}{params.batch_size}",
+		f"{GREEN}p={BLUE}{params.processes}{ENDC}",
+		f"{GREEN}d={BLUE}{params.debug}",
+	)
 
 	start_time = time.perf_counter()
-	main_wrapper(debug=DEBUG)
+	main_wrapper(params)
 	end_time = time.perf_counter()
 	
 	elapsed_time = round(end_time - start_time, 2)

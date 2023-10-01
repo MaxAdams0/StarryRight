@@ -91,9 +91,13 @@ class ZernikePolynomial:
 		
 		# Scale the PSF by the pixel size
 		psf /= (pixel_size ** 2)
+
+		# Normalize the psf frin 0-1
+		psf = (psf-np.min(psf)) / (np.max(psf)-np.min(psf))
 		
 		# Resize the PSF to the desired size for better visualization
-		psf = np.pad(psf, ((psf_size-size)//2, (psf_size-size)//2), mode='constant')
+		# Causes ValueError: index can't contain negative values now for no reason ig
+		#psf = np.pad(psf, ((psf_size-size)//2, (psf_size-size)//2), mode='constant')
 		
 		return psf
 
@@ -114,7 +118,6 @@ class ZernikePolynomial:
 		plt.xlabel('Pixel')
 		plt.ylabel('Pixel')
 		plt.show()
-	
 
 	def apply_psf_to_image(self, image, psf):
 		# Separate the image into color channels
@@ -144,6 +147,5 @@ class ZernikePolynomial:
 		return convolved_image
 	
 	def rotate_psf(self, psf, theta):
-		
 		rotated_psf = ndimage.rotate(psf, theta)
 		return rotated_psf

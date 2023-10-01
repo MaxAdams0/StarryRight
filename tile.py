@@ -33,7 +33,7 @@ class ImageTile:
 		height, width, ch = image.shape
 
 		if height < self.min_input_size or width < self.min_input_size:
-			return []
+			return None
 
 		# Get the number of tiles horizontally and vertically
 		num_tiles_width = (width//self.tile_size)+1
@@ -62,15 +62,12 @@ class ImageTile:
 
 		images = []
 
-		try:
-			# Create and save each tile
-			for row in range(num_tiles_width):
-				for col in range(num_tiles_height):
-					x1, y1, x2, y2 = tile_x1s[row], tile_y1s[col], tile_x2s[row], tile_y2s[col]
-					name = image_info[1] + f"_{row}_{col}" + image_info[2]
-					images.append((name, image[y1:y2, x1:x2]))
-		except Exception as e:
-			print(f"ERROR while tiling: {e}")
+		# Create and save each tile
+		for row in range(num_tiles_width):
+			for col in range(num_tiles_height):
+				x1, y1, x2, y2 = tile_x1s[row], tile_y1s[col], tile_x2s[row], tile_y2s[col]
+				name = image_info[1] + f"_{row}_{col}" + image_info[2]
+				images.append((name, image[y1:y2, x1:x2]))
 
 		if debug:
 			debug_image = image.copy()
@@ -96,13 +93,5 @@ class ImageTile:
 		
 		return chosen
 
-
 	def stitch_image(input_dir, output_dir):
 		return True
-
-
-"""
-# First tile the image into 512x512 images
-	tiler = ImageTile(input_path, output_directory)
-	tiler.tile_image(debug=False)
-"""
